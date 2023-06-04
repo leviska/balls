@@ -1,4 +1,7 @@
+use std::process::exit;
+
 use macroquad::prelude::*;
+use video::SimpleEncoder;
 
 mod video;
 
@@ -49,6 +52,7 @@ impl Polynomial {
             components: coefs
                 .into_iter()
                 .enumerate()
+                .filter(|(_, x)| *x != 0.0)
                 .map(|(p, x)| (x, p as i32))
                 .collect(),
         }
@@ -188,6 +192,7 @@ struct Ball {
     pos: Vec2,
     speed: Vec2,
     color: Color,
+    start_y: f32,
 }
 
 type Balls = [Ball];
@@ -199,6 +204,18 @@ fn get_new(pos: Vec2, speed: Vec2, acc: Vec2, dt: f32) -> (Vec2, Vec2) {
 }
 
 const EPS: f32 = 0.0001;
+
+fn fix_energy(pos: Vec2, speed: Vec2, start_y: f32, acc: Vec2) -> Vec2 {
+    let potential = (pos.y - start_y) * acc.length();
+    let speed_len = speed.length();
+    let kinetic = speed_len * speed_len / 2.0;
+    if kinetic + potential < 0.0 {
+        let target = (2.0 * -potential).sqrt();
+        speed * target / speed_len
+    } else {
+        speed
+    }
+}
 
 fn process_single(
     f: &impl Function,
@@ -238,6 +255,9 @@ fn update_balls(f: &impl Function, balls: &mut Balls, dt: f32) {
         // hard limit to 10 processes
         for _ in 0..10 {
             (npos, nspeed, ndt) = process_single(f, npos, nspeed, ACC, ndt);
+            if dt > 0.0 {
+                nspeed = fix_energy(npos, nspeed, b.start_y, ACC);
+            }
             if ndt / dt < EPS {
                 break;
             }
@@ -262,27 +282,46 @@ fn draw_balls(balls: &Balls) {
     }
 }
 
+// fn init_balls(f: &impl Function, start: f32, shift: f32) -> Vec<Ball> {
+//     let start = vec2(start, f.f(start) + shift);
+//     let from = -500;
+//     let to = 501;
+//     (from..to)
+//         .map(|i| {
+//             let pos = start + vec2(0.0001, 0.0) * i as f32;
+//             let color = color_hsv(
+//                 (i - from) as f32 / (to - from) as f32 * 350.0,
+//                 1.0,
+//                 1.0,
+//                 1.0,
+//             );
+//             (pos, color)
+//         })
+//         .map(|(pos, color)| Ball {
+//             pos,
+//             color,
+//             start_y: pos.y,
+//             ..Default::default()
+//         })
+//         .collect()
+// }
+
 fn init_balls(f: &impl Function, start: f32, shift: f32) -> Vec<Ball> {
-    let start = vec2(start, f.f(start) + shift);
-    let from = -500;
-    let to = 501;
-    (from..to)
-        .map(|i| {
-            let pos = start + vec2(0.0001, 0.0) * i as f32;
-            let color = color_hsv(
-                (i - from) as f32 / (to - from) as f32 * 350.0,
-                1.0,
-                1.0,
-                1.0,
-            );
-            (pos, color)
-        })
-        .map(|(pos, color)| Ball {
-            pos,
-            color,
-            ..Default::default()
-        })
-        .collect()
+    let mut balls = Vec::default();
+    for x in (0..WINDOW_WIDTH / 2).step_by(10) {
+        for y in (0..WINDOW_HEIGHT).step_by(10) {
+            let pos = screen_to_math(vec2(x as f32, y as f32));
+            if f.f(pos.x) < pos.y {
+                balls.push(Ball {
+                    pos,
+                    color: color_hsv(x as f32 / 540.0 * 360.0, y as f32 / 1080.0, 1.0, 1.0),
+                    start_y: pos.y,
+                    ..Default::default()
+                })
+            }
+        }
+    }
+    balls
 }
 
 fn window_conf() -> Conf {
@@ -303,11 +342,13 @@ const WINDOW_HEIGHT: u32 = 1080;
 
 #[macroquad::main(window_conf)]
 async fn main() {
+    let f = Polynomial::nth(vec![-2.0, 0.0, -1.0, 0.0, 0.1]);
     // let f = Polynomial::parabola_p(vec2(0.0, -2.0), 0.1);
-    let f = SemiCircle::new(vec2(0.0, -0.0), 4.0);
-    let mut balls = init_balls(&f, XCENTER - XDIM * 2.0 / 8.0, 3.0);
+    // let f = SemiCircle::new(vec2(0.0, -0.0), 4.0);
+    let mut balls = init_balls(&f, XCENTER - XDIM * 2.5 / 8.0, 3.0);
 
-    let mut dt: f32 = 0.025;
+    const START_DT: f32 = 0.002;
+    let mut dt: f32 = START_DT;
 
     let render_target = render_target(WINDOW_WIDTH, WINDOW_HEIGHT);
     render_target.texture.set_filter(FilterMode::Linear);
@@ -318,6 +359,9 @@ async fn main() {
         -screen_height(),
     ));
     camera.render_target = Some(render_target);
+
+    let mut encoder = Some(SimpleEncoder::new("output.mp4", 1080, 1080, 30).unwrap());
+    // let mut encoder: Option<SimpleEncoder> = None;
 
     loop {
         set_camera(&camera);
@@ -331,13 +375,23 @@ async fn main() {
         } else if is_key_pressed(KeyCode::Left) {
             dt /= 2.0;
         }
-        dt = dt.clamp(0.025 / 8.0, 0.025 * 8.0);
-        for _ in 0..10 {
+        dt = dt.clamp(START_DT / 8.0, START_DT * 8.0);
+        for _ in 0..100 {
             update_balls(&f, &mut balls, dt);
         }
         draw_balls(&balls);
 
         set_default_camera();
+
+        if let Some(e) = &mut encoder {
+            let image = render_target.texture.get_texture_data();
+            let still_rendering = e.render(&image.bytes).unwrap();
+            if !still_rendering {
+                let encoder = encoder.take().unwrap();
+                encoder.done().unwrap();
+                println!("Rendering done");
+            }
+        }
 
         clear_background(BLACK);
         draw_texture_ex(
