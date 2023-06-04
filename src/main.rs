@@ -36,12 +36,12 @@ fn color_hsv(h: f32, s: f32, v: f32) -> Color {
     let m = v - c;
 
     match range {
-        0 => Color::new((c + m), (x + m), m, 1.0),
-        1 => Color::new((x + m), (c + m), m, 1.0),
-        2 => Color::new(m, (c + m), (x + m), 1.0),
-        3 => Color::new(m, (x + m), (c + m), 1.0),
-        4 => Color::new((x + m), m, (c + m), 1.0),
-        _ => Color::new((c + m), m, (x + m), 1.0),
+        0 => Color::new(c + m, x + m, m, 1.0),
+        1 => Color::new(x + m, c + m, m, 1.0),
+        2 => Color::new(m, c + m, x + m, 1.0),
+        3 => Color::new(m, x + m, c + m, 1.0),
+        4 => Color::new(x + m, m, c + m, 1.0),
+        _ => Color::new(c + m, m, x + m, 1.0),
     }
 }
 
@@ -162,7 +162,6 @@ fn init_balls() -> Vec<Ball> {
     let start = vec2(-0.8, 1.0);
     let shift = 0.005;
     (0..100)
-        .into_iter()
         .map(|i| {
             let mut pos = vec2(start.x + shift * i as f32, start.y);
             pos.y = pos.y;
