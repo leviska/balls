@@ -1,5 +1,3 @@
-use std::process::exit;
-
 use macroquad::prelude::*;
 use video::SimpleEncoder;
 
